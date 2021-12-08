@@ -47,7 +47,7 @@ const APP: () = {
         timer0: Timer<TIMER0, Periodic>,
         led1: Pin<Output<PushPull>>,
         led2: Pin<Output<PushPull>>,
-        // TODO accelerometer: Lis3dhInstance,
+        accelerometer: Lis3dhInstance,
     }
 
     // Initialize peripherals, before interrupts are unmasked
@@ -91,26 +91,30 @@ const APP: () = {
         // TODO:
         // ===== 1. Initialize i2c SCL,SDA as floating inputs and degrade. ======
         // Initialize pin connected to the acceleromers INT pin as pull down input.
-        // let scl = port0...;
-        // let sda = port0...;
-        // let int = port0...;
-        // let pins = TwimPins { scl, sda };
+        let scl = port0.p0_27.into_floating_input().degrade();
+        let sda = port0.p0_26.into_floating_input().degrade();
+        let int = port0.p0_02.into_floating_input().degrade();
+        let pins = TwimPins { scl, sda };
 
         // ===== 2. Initialize TWIM0 peripheral using HAL with 400kHz clock frequency =====
-        // let freq = TwimFrequency...;
-        // let twim0 = hal::twim::Twim::new...;
+        let freq = TwimFrequency::K400;
+        let twim0 = hal::twim::Twim::new(ctx.device.TWIM0, pins, freq);
 
         // ===== 3. Connect INT pin to GPIOTE channel 1, listening for high-to-low transition =====
-        // TODO
+        gpiote
+            .channel1()
+            .input_pin(&int)
+            .hi_to_lo()
+            .enable_interrupt();
 
         // ===== 4. Initialize lis3dh driver, add them to the resources =====
         // Just uncomment the line below for this step
-        // let accelerometer = acc::config_acc(twim0).unwrap();
+        let mut accelerometer = acc::config_acc(twim0).unwrap();
+        let device_id = accelerometer.get_device_id();
         // ===== 5. Update the existing `on_gpiote` task to spawn a new task on channel 1 event,
         //    which fetches accelerometer data and prints it =====
-        //    *To read a sample:*
-        //      let sample = accelerometer.accel_norm().unwrap();
-        //      rprintln!("Sample: x: {}, y: {}, z: {}", sample.x, sample.y, sample.z);
+
+        // ===== 6. Test it! Tap the accelerometer board and see if it raises an interrupt =====
 
         let now = ctx.start;
         // Schedule toggle_led_2 task
@@ -121,7 +125,7 @@ const APP: () = {
             led2,
             gpiote,
             timer0,
-            // TODO: accelerometer
+            accelerometer,
         }
     }
 
@@ -189,7 +193,7 @@ const APP: () = {
         binds = GPIOTE,
         priority = 20,
         resources = [gpiote, led2],
-        spawn = [set_led1_state]
+        spawn = [set_led1_state, read_accel]
     )]
     fn on_gpiote(ctx: on_gpiote::Context) {
         let gpiote = ctx.resources.gpiote;
@@ -202,7 +206,20 @@ const APP: () = {
             // Try to spawn set_led1_state. If it's queue is full, we do nothing.
             ctx.spawn.set_led1_state(true).ok();
         }
+        if gpiote.channel1().is_event_triggered() {
+            // Clear events
+            gpiote.channel1().reset_events();
+            // Try to spawn set_led1_state. If it's queue is full, we do nothing.
+            ctx.spawn.read_accel().ok();
+        }
         // TODO check if LIS3DH caused the interrupt. If so, spawn read task
+    }
+
+    #[task(priority = 10, capacity = 5, resources = [accelerometer])]
+    fn read_accel(ctx: read_accel::Context) {
+        let accelerometer = ctx.resources.accelerometer;
+        let sample = accelerometer.accel_norm().unwrap();
+        rprintln!("Sample: x: {}, y: {}, z: {}", sample.x, sample.y, sample.z);
     }
 
     #[task(
@@ -231,5 +248,11 @@ const APP: () = {
         fn SWI1_EGU1();
         // Software interrupt 2 / Event generator unit 2
         fn SWI2_EGU2();
+        // Software interrupt 3 / Event generator unit 3
+        fn SWI3_EGU3();
+        // Software interrupt 4 / Event generator unit 2
+        fn SWI4_EGU4();
+        // Software interrupt 5 / Event generator unit 2
+        fn SWI5_EGU5();
     }
 };
